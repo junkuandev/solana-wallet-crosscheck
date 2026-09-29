@@ -1,0 +1,36 @@
+name: Solana Wallet Crosscheck
+
+on:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Run wallet scanner
+        env:
+          SOLSCAN_API_KEY: ${{ secrets.SOLSCAN_API_KEY }}
+        run: node scanner.js
+
+      - name: Upload scan results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solana-wallet-crosscheck-results
+          path: |
+            results.json
+            results.csv
+            matches.json
+            matches.txt
+          if-no-files-found: warn
