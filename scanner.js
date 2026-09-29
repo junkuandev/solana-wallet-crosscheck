@@ -66,8 +66,25 @@ const wallets = [
   "4ht81V1cV6z3rWzMbSj2tUthQdqt3pUuTKSZmhvUR1N3"
 ];
 
-const sleep = ms =>
-  new Promise(resolve => setTimeout(resolve, ms));
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+let results = [];
+
+if (fs.existsSync('results.json')) {
+  try {
+    results = JSON.parse(fs.readFileSync('results.json', 'utf8'));
+    console.log(`Resuming with ${results.length} saved result(s).`);
+  } catch {
+    console.log('Existing results.json could not be parsed. Starting fresh.');
+  }
+}
+
+function saveProgress() {
+  fs.writeFileSync(
+    'results.json',
+    JSON.stringify(results, null, 2)
+  );
+}
 
 function containsToken(row, mint) {
   const routers = Array.isArray(row.routers)
@@ -77,20 +94,18 @@ function containsToken(row, mint) {
       : [];
 
   for (const router of routers) {
-    if (
-      router.token1 === mint ||
-      router.token2 === mint
-    ) {
+    if (router.token1 === mint || router.token2 === mint) {
       return true;
     }
 
     if (Array.isArray(router.child_routers)) {
-      const found = router.child_routers.some(child =>
-        child.token1 === mint ||
-        child.token2 === mint
-      );
-
-      if (found) return true;
+      if (
+        router.child_routers.some(
+          child => child.token1 === mint || child.token2 === mint
+        )
+      ) {
+        return true;
+      }
     }
   }
 
@@ -104,45 +119,33 @@ async function request(wallet, mint) {
 
   url.searchParams.set('address', wallet);
   url.searchParams.set('token', mint);
-
-  url.searchParams.append(
-    'activity_type[]',
-    'ACTIVITY_TOKEN_SWAP'
-  );
-
+  url.searchParams.append('activity_type[]', 'ACTIVITY_TOKEN_SWAP');
   url.searchParams.set('page', '1');
   url.searchParams.set('page_size', '100');
   url.searchParams.set('sort_by', 'block_time');
   url.searchParams.set('sort_order', 'asc');
 
-  let attempt = 0;
-
-  while (attempt < 10) {
-    attempt++;
-
+  for (let attempt = 1; attempt <= 12; attempt++) {
     const response = await fetch(url, {
       headers: {
         token: API_KEY
       }
     });
 
-    /*
-      Respect Solscan's free-tier throttling.
-
-      If a Retry-After header exists, use it.
-      Otherwise progressively wait longer.
-    */
     if (response.status === 429) {
-      const retryAfter =
-        Number(response.headers.get('retry-after'));
+      saveProgress();
+
+      const retryAfter = Number(
+        response.headers.get('retry-after')
+      );
 
       const waitSeconds =
         Number.isFinite(retryAfter) && retryAfter > 0
           ? retryAfter
-          : Math.min(60 * attempt, 600);
+          : Math.min(60 * attempt, 3600);
 
       console.log(
-        `429 rate limit. Waiting ${waitSeconds}s...`
+        `429 rate limit. Progress saved. Waiting ${waitSeconds}s...`
       );
 
       await sleep(waitSeconds * 1000);
@@ -159,8 +162,8 @@ async function request(wallet, mint) {
       );
     }
 
-    const activities = (json.data || []).filter(row =>
-      containsToken(row, mint)
+    const activities = (json.data || []).filter(
+      row => containsToken(row, mint)
     );
 
     return {
@@ -170,14 +173,27 @@ async function request(wallet, mint) {
     };
   }
 
-  throw new Error('Rate limited after 10 retries');
+  throw new Error('Rate limited after maximum retries');
+}
+
+function alreadyProcessed(wallet) {
+  return results.some(
+    result =>
+      result.wallet === wallet &&
+      !result.error
+  );
 }
 
 async function main() {
-  const results = [];
-
   for (let i = 0; i < wallets.length; i++) {
     const wallet = wallets[i];
+
+    if (alreadyProcessed(wallet)) {
+      console.log(
+        `[${i + 1}/${wallets.length}] Already processed: ${wallet}`
+      );
+      continue;
+    }
 
     console.log(
       `\n[${i + 1}/${wallets.length}] ${wallet}`
@@ -186,10 +202,7 @@ async function main() {
     try {
       console.log('Checking SUBS...');
 
-      const subs = await request(
-        wallet,
-        TOKENS.SUBS
-      );
+      const subs = await request(wallet, TOKENS.SUBS);
 
       console.log(
         `SUBS: ${subs.traded ? 'YES' : 'NO'}`
@@ -205,34 +218,21 @@ async function main() {
           cowSwaps: 0
         });
 
-        // Long delay to protect free API allowance.
-        await sleep(20000);
+        saveProgress();
 
+        console.log('Progress saved.');
+
+        await sleep(30000);
         continue;
       }
 
-      await sleep(20000);
+      await sleep(30000);
 
       console.log('Checking COW...');
 
-      const cow = await request(
-        wallet,
-        TOKENS.COW
-      );
+      const cow = await request(wallet, TOKENS.COW);
 
-      const both =
-        subs.traded &&
-        cow.traded;
-
-      console.log(
-        `COW: ${cow.traded ? 'YES' : 'NO'}`
-      );
-
-      if (both) {
-        console.log(
-          `*** MATCH: ${wallet} ***`
-        );
-      }
+      const both = subs.traded && cow.traded;
 
       results.push({
         wallet,
@@ -245,70 +245,59 @@ async function main() {
         cowActivities: cow.activities
       });
 
+      saveProgress();
+
+      console.log(
+        `COW: ${cow.traded ? 'YES' : 'NO'}`
+      );
+
+      if (both) {
+        console.log(
+          `*** MATCH: ${wallet} ***`
+        );
+      }
+
+      console.log('Progress saved.');
+
     } catch (error) {
       console.error(
-        `ERROR: ${wallet}`,
-        error.message
+        `ERROR: ${wallet}: ${error.message}`
       );
 
       results.push({
         wallet,
         error: error.message
       });
+
+      saveProgress();
     }
 
-    /*
-      20-second delay between wallets.
-      Increase this if Solscan still throttles.
-    */
-    await sleep(20000);
-
-    /*
-      Save progress after every wallet.
-      This means partial results survive if the
-      job eventually fails.
-    */
-    fs.writeFileSync(
-      'results.json',
-      JSON.stringify(results, null, 2)
-    );
+    await sleep(30000);
   }
 
-  const matches =
-    results.filter(result => result.both);
-
-  const csvRows = [
-    [
-      'wallet',
-      'SUBS',
-      'COW',
-      'both',
-      'SUBS_swaps',
-      'COW_swaps'
-    ].join(',')
-  ];
-
-  for (const result of results) {
-    csvRows.push([
-      result.wallet,
-      result.subs ? 'YES' : 'NO',
-      result.cow ? 'YES' : 'NO',
-      result.both ? 'YES' : 'NO',
-      result.subsSwaps ?? '',
-      result.cowSwaps ?? ''
-    ].join(','));
-  }
-
-  fs.writeFileSync(
-    'results.csv',
-    csvRows.join('\n')
+  const matches = results.filter(
+    result => result.both
   );
+
+  const csv = [
+    'wallet,SUBS,COW,both,SUBS_swaps,COW_swaps',
+    ...results.map(result =>
+      [
+        result.wallet,
+        result.subs ? 'YES' : 'NO',
+        result.cow ? 'YES' : 'NO',
+        result.both ? 'YES' : 'NO',
+        result.subsSwaps ?? '',
+        result.cowSwaps ?? ''
+      ].join(',')
+    )
+  ].join('\n');
+
+  fs.writeFileSync('results.csv', csv);
 
   fs.writeFileSync(
     'matches.txt',
-    matches
-      .map(result => result.wallet)
-      .join('\n')
+    matches.map(x => x.wallet).join('\n')
   );
 
   fs.writeFileSync(
@@ -316,18 +305,17 @@ async function main() {
     JSON.stringify(matches, null, 2)
   );
 
-  console.log('\n=======================');
-  console.log(
-    `MATCHES: ${matches.length}`
-  );
-  console.log('=======================');
+  console.log('\n===================');
+  console.log(`MATCHES: ${matches.length}`);
+  console.log('===================');
 
-  matches.forEach(result =>
-    console.log(result.wallet)
+  matches.forEach(x =>
+    console.log(x.wallet)
   );
 }
 
 main().catch(error => {
+  saveProgress();
   console.error(error);
   process.exit(1);
 });
