@@ -1,9 +1,9 @@
 const fs = require('fs');
 
-const API_KEY = process.env.SOLSCAN_API_KEY;
+const API_KEY = process.env.HELIUS_API_KEY;
 
 if (!API_KEY) {
-  throw new Error('SOLSCAN_API_KEY is missing');
+  throw new Error('HELIUS_API_KEY is missing');
 }
 
 const TOKENS = {
@@ -68,254 +68,293 @@ const wallets = [
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-let results = [];
+/*
+ * Maximum pages per wallet.
+ *
+ * 100 SWAP transactions/page means 100 pages = up to 10,000 swaps.
+ * We stop much earlier as soon as BOTH tokens are found.
+ */
+const MAX_PAGES = 100;
+const REQUEST_DELAY_MS = 500;
 
-if (fs.existsSync('results.json')) {
-  try {
-    results = JSON.parse(fs.readFileSync('results.json', 'utf8'));
-    console.log(`Resuming with ${results.length} saved result(s).`);
-  } catch {
-    console.log('Existing results.json could not be parsed. Starting fresh.');
+async function fetchPage(wallet, before = null) {
+  const url = new URL(
+    `https://api.helius.xyz/v0/addresses/${wallet}/transactions`
+  );
+
+  url.searchParams.set('api-key', API_KEY);
+  url.searchParams.set('limit', '100');
+  url.searchParams.set('type', 'SWAP');
+
+  if (before) {
+    url.searchParams.set('before', before);
   }
+
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    const response = await fetch(url);
+
+    if (response.status === 429 || response.status === 503) {
+      const retryHeader = response.headers.get('retry-after');
+
+      let waitMs;
+
+      if (retryHeader && !Number.isNaN(Number(retryHeader))) {
+        waitMs = Number(retryHeader) * 1000;
+      } else {
+        // 1s, 2s, 4s, 8s, 16s, max 30s
+        waitMs = Math.min(1000 * (2 ** (attempt - 1)), 30000);
+
+        // Small jitter so repeated retries don't align exactly.
+        waitMs *= 0.75 + Math.random() * 0.5;
+      }
+
+      console.log(
+        `    HTTP ${response.status}. Retrying in ${(waitMs / 1000).toFixed(1)}s...`
+      );
+
+      await sleep(waitMs);
+      continue;
+    }
+
+    if (!response.ok) {
+      const body = await response.text();
+
+      throw new Error(
+        `Helius HTTP ${response.status}: ${body.slice(0, 300)}`
+      );
+    }
+
+    return response.json();
+  }
+
+  throw new Error('Helius failed after maximum retries');
 }
 
-function saveProgress() {
+function transactionContainsMint(tx, mint) {
+  return (tx.tokenTransfers || []).some(
+    transfer => transfer.mint === mint
+  );
+}
+
+async function scanWallet(wallet) {
+  let before = null;
+
+  const subsTransactions = [];
+  const cowTransactions = [];
+
+  let pagesScanned = 0;
+  let swapsScanned = 0;
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const transactions = await fetchPage(wallet, before);
+
+    pagesScanned++;
+    swapsScanned += transactions.length;
+
+    if (!transactions.length) {
+      break;
+    }
+
+    for (const tx of transactions) {
+      if (transactionContainsMint(tx, TOKENS.SUBS)) {
+        subsTransactions.push(tx);
+      }
+
+      if (transactionContainsMint(tx, TOKENS.COW)) {
+        cowTransactions.push(tx);
+      }
+    }
+
+    console.log(
+      `    Page ${page}: ${transactions.length} swaps | ` +
+      `SUBS=${subsTransactions.length} | COW=${cowTransactions.length}`
+    );
+
+    /*
+     * Our immediate goal is only finding wallets that traded BOTH.
+     * Once both have been found, there is no reason to consume more
+     * Helius credits on this wallet during the first pass.
+     */
+    if (
+      subsTransactions.length > 0 &&
+      cowTransactions.length > 0
+    ) {
+      break;
+    }
+
+    if (transactions.length < 100) {
+      // We reached the oldest available SWAP transaction.
+      break;
+    }
+
+    const lastTransaction = transactions[transactions.length - 1];
+
+    if (!lastTransaction?.signature) {
+      break;
+    }
+
+    before = lastTransaction.signature;
+
+    await sleep(REQUEST_DELAY_MS);
+  }
+
+  return {
+    wallet,
+    subs: subsTransactions.length > 0,
+    cow: cowTransactions.length > 0,
+    both:
+      subsTransactions.length > 0 &&
+      cowTransactions.length > 0,
+
+    subsTransactions,
+    cowTransactions,
+
+    pagesScanned,
+    swapsScanned
+  };
+}
+
+function saveFiles(results) {
   fs.writeFileSync(
     'results.json',
     JSON.stringify(results, null, 2)
   );
-}
 
-function containsToken(row, mint) {
-  const routers = Array.isArray(row.routers)
-    ? row.routers
-    : row.routers
-      ? [row.routers]
-      : [];
-
-  for (const router of routers) {
-    if (router.token1 === mint || router.token2 === mint) {
-      return true;
-    }
-
-    if (Array.isArray(router.child_routers)) {
-      if (
-        router.child_routers.some(
-          child => child.token1 === mint || child.token2 === mint
-        )
-      ) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-async function request(wallet, mint) {
-  const url = new URL(
-    'https://pro-api.solscan.io/playground/account/defi/activities'
-  );
-
-  url.searchParams.set('address', wallet);
-  url.searchParams.set('token', mint);
-  url.searchParams.append('activity_type[]', 'ACTIVITY_TOKEN_SWAP');
-  url.searchParams.set('page', '1');
-  url.searchParams.set('page_size', '100');
-  url.searchParams.set('sort_by', 'block_time');
-  url.searchParams.set('sort_order', 'asc');
-
-  for (let attempt = 1; attempt <= 12; attempt++) {
-    const response = await fetch(url, {
-      headers: {
-        token: API_KEY
-      }
-    });
-
-    if (response.status === 429) {
-      saveProgress();
-
-      const retryAfter = Number(
-        response.headers.get('retry-after')
-      );
-
-      const waitSeconds =
-        Number.isFinite(retryAfter) && retryAfter > 0
-          ? retryAfter
-          : Math.min(60 * attempt, 3600);
-
-      console.log(
-        `429 rate limit. Progress saved. Waiting ${waitSeconds}s...`
-      );
-
-      await sleep(waitSeconds * 1000);
-      continue;
-    }
-
-    const json = await response.json();
-
-    if (!json.success) {
-      throw new Error(
-        `${json.errors?.code || ''} ${
-          json.errors?.message || 'API error'
-        }`
-      );
-    }
-
-    const activities = (json.data || []).filter(
-      row => containsToken(row, mint)
-    );
-
-    return {
-      traded: activities.length > 0,
-      count: activities.length,
-      activities
-    };
-  }
-
-  throw new Error('Rate limited after maximum retries');
-}
-
-function alreadyProcessed(wallet) {
-  return results.some(
-    result =>
-      result.wallet === wallet &&
-      !result.error
-  );
-}
-
-async function main() {
-  for (let i = 0; i < wallets.length; i++) {
-    const wallet = wallets[i];
-
-    if (alreadyProcessed(wallet)) {
-      console.log(
-        `[${i + 1}/${wallets.length}] Already processed: ${wallet}`
-      );
-      continue;
-    }
-
-    console.log(
-      `\n[${i + 1}/${wallets.length}] ${wallet}`
-    );
-
-    try {
-      console.log('Checking SUBS...');
-
-      const subs = await request(wallet, TOKENS.SUBS);
-
-      console.log(
-        `SUBS: ${subs.traded ? 'YES' : 'NO'}`
-      );
-
-      if (!subs.traded) {
-        results.push({
-          wallet,
-          subs: false,
-          cow: false,
-          both: false,
-          subsSwaps: 0,
-          cowSwaps: 0
-        });
-
-        saveProgress();
-
-        console.log('Progress saved.');
-
-        await sleep(30000);
-        continue;
-      }
-
-      await sleep(30000);
-
-      console.log('Checking COW...');
-
-      const cow = await request(wallet, TOKENS.COW);
-
-      const both = subs.traded && cow.traded;
-
-      results.push({
-        wallet,
-        subs: subs.traded,
-        cow: cow.traded,
-        both,
-        subsSwaps: subs.count,
-        cowSwaps: cow.count,
-        subsActivities: subs.activities,
-        cowActivities: cow.activities
-      });
-
-      saveProgress();
-
-      console.log(
-        `COW: ${cow.traded ? 'YES' : 'NO'}`
-      );
-
-      if (both) {
-        console.log(
-          `*** MATCH: ${wallet} ***`
-        );
-      }
-
-      console.log('Progress saved.');
-
-    } catch (error) {
-      console.error(
-        `ERROR: ${wallet}: ${error.message}`
-      );
-
-      results.push({
-        wallet,
-        error: error.message
-      });
-
-      saveProgress();
-    }
-
-    await sleep(30000);
-  }
-
-  const matches = results.filter(
-    result => result.both
-  );
-
-  const csv = [
-    'wallet,SUBS,COW,both,SUBS_swaps,COW_swaps',
-    ...results.map(result =>
-      [
-        result.wallet,
-        result.subs ? 'YES' : 'NO',
-        result.cow ? 'YES' : 'NO',
-        result.both ? 'YES' : 'NO',
-        result.subsSwaps ?? '',
-        result.cowSwaps ?? ''
-      ].join(',')
-    )
-  ].join('\n');
-
-  fs.writeFileSync('results.csv', csv);
-
-  fs.writeFileSync(
-    'matches.txt',
-    matches.map(x => x.wallet).join('\n')
-  );
+  const matches = results.filter(result => result.both);
 
   fs.writeFileSync(
     'matches.json',
     JSON.stringify(matches, null, 2)
   );
 
-  console.log('\n===================');
-  console.log(`MATCHES: ${matches.length}`);
-  console.log('===================');
-
-  matches.forEach(x =>
-    console.log(x.wallet)
+  fs.writeFileSync(
+    'matches.txt',
+    matches
+      .map(result => result.wallet)
+      .join('\n')
   );
+
+  const csv = [
+    'wallet,SUBS,COW,both,SUBS_transactions,COW_transactions,pages_scanned,swaps_scanned',
+
+    ...results.map(result =>
+      [
+        result.wallet,
+        result.subs ? 'YES' : 'NO',
+        result.cow ? 'YES' : 'NO',
+        result.both ? 'YES' : 'NO',
+        result.subsTransactions?.length ?? 0,
+        result.cowTransactions?.length ?? 0,
+        result.pagesScanned ?? '',
+        result.swapsScanned ?? ''
+      ].join(',')
+    )
+  ].join('\n');
+
+  fs.writeFileSync('results.csv', csv);
+}
+
+async function main() {
+  let results = [];
+
+  /*
+   * If results.json exists, don't redo wallets that were
+   * successfully completed during this same runner/session.
+   */
+  if (fs.existsSync('results.json')) {
+    try {
+      results = JSON.parse(
+        fs.readFileSync('results.json', 'utf8')
+      );
+
+      console.log(
+        `Loaded ${results.length} previous result(s).`
+      );
+    } catch {
+      console.log(
+        'Could not read previous results.json. Starting fresh.'
+      );
+    }
+  }
+
+  for (let i = 0; i < wallets.length; i++) {
+    const wallet = wallets[i];
+
+    const previous = results.find(
+      result =>
+        result.wallet === wallet &&
+        !result.error
+    );
+
+    if (previous) {
+      console.log(
+        `[${i + 1}/${wallets.length}] Already scanned: ${wallet}`
+      );
+
+      continue;
+    }
+
+    console.log(
+      `\n[${i + 1}/${wallets.length}] Scanning ${wallet}`
+    );
+
+    try {
+      const result = await scanWallet(wallet);
+
+      results = results.filter(
+        existing => existing.wallet !== wallet
+      );
+
+      results.push(result);
+
+      if (result.both) {
+        console.log(
+          `    >>> MATCH — TRADED BOTH <<<`
+        );
+      } else {
+        console.log(
+          `    Finished: SUBS=${result.subs ? 'YES' : 'NO'}, ` +
+          `COW=${result.cow ? 'YES' : 'NO'}`
+        );
+      }
+
+    } catch (error) {
+      console.error(
+        `    ERROR: ${error.message}`
+      );
+
+      results = results.filter(
+        existing => existing.wallet !== wallet
+      );
+
+      results.push({
+        wallet,
+        error: error.message
+      });
+    }
+
+    /*
+     * Save after EVERY wallet.
+     */
+    saveFiles(results);
+
+    await sleep(REQUEST_DELAY_MS);
+  }
+
+  saveFiles(results);
+
+  const matches = results.filter(result => result.both);
+
+  console.log('\n================================');
+  console.log(`WALLETS THAT TRADED BOTH: ${matches.length}`);
+  console.log('================================');
+
+  matches.forEach((result, i) => {
+    console.log(`${i + 1}. ${result.wallet}`);
+  });
 }
 
 main().catch(error => {
-  saveProgress();
   console.error(error);
   process.exit(1);
 });
