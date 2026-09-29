@@ -20,8 +20,8 @@ jobs:
 
       - name: Run wallet scanner
         env:
-          SOLSCAN_API_KEY: ${{ secrets.SOLSCAN_API_KEY }}
-        run: node scanner.js
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+        run: node test-helius.js
 
       - name: Upload current progress
         if: always()
