@@ -23,7 +23,7 @@ jobs:
           SOLSCAN_API_KEY: ${{ secrets.SOLSCAN_API_KEY }}
         run: node scanner.js
 
-      - name: Upload scan results
+      - name: Upload current progress
         if: always()
         uses: actions/upload-artifact@v4
         with:
