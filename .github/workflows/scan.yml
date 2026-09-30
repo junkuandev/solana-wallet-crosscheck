@@ -6,10 +6,7 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
-
-    # Plenty of room for highly active wallets.
-    timeout-minutes: 360
-
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,20 +16,13 @@ jobs:
         with:
           node-version: 22
 
-      - name: Identify EMBER tokens
-        env:
-          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+      - name: Install Solana public key tools
+        run: npm install --no-save --no-package-lock @solana/web3.js@1
+
+      - name: Identify EMBER candidate tokens
         run: node identify-ember.js
-      
-      - name: Verify output files
-        if: always()
-        run: |
-          echo "Repository files:"
-          ls -lah
-          echo "Expected output files:"
-          ls -lh ember-identified.json ember-name-matches.json
-      
-      - name: Upload EMBER identification results
+
+      - name: Upload metadata results (including partial results)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -40,4 +30,5 @@ jobs:
           path: |
             ember-identified.json
             ember-name-matches.json
-          if-no-files-found: error
+            ember-identification-status.json
+          if-no-files-found: warn
