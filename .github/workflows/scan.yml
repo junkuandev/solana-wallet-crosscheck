@@ -24,16 +24,13 @@ jobs:
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
         run: node scanner.js
 
-      - name: Upload scan results
+      - name: Upload Keainu results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: boar-inu-wallet-scan
+          name: keainu-wallet-scan
           path: |
-            results.json
-            summary.csv
-            hard-matches.json
-            strong-matches.json
-            strong-matches.txt
+            keainu-results.json
+            keainu-summary.json
           if-no-files-found: warn
           retention-days: 7
