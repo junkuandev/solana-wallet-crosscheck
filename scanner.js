@@ -1,292 +1,225 @@
 
 const fs = require("fs");
 
-const API_KEY = process.env.HELIUS_API_KEY;
-if (!API_KEY) throw new Error("Missing HELIUS_API_KEY");
+const KEY = process.env.HELIUS_API_KEY;
+if (!KEY) throw Error("Missing HELIUS_API_KEY");
 
-const KEAINU = "2ekjqFvTt6Adu1QC5UEmxm2bfJSdqw8QThiSoJbqcJVM";
+const EMBER = "5dvXTZ5qwgafnHtwu3Ls3QrWx1U4LQsFeCuJgkk4QEC6";
 const WSOL = "So11111111111111111111111111111111111111112";
 
 const wallets = [
-  {
-    wallet: "Finr5rgQ4B4oZxAfjpA61Cpw77ZJG73FHv9X8mqdZiL6",
-    before: "4VqRx8nzT8Vv6vPgzSHyf3uwmkhDUYGp2Uu55y7CjnHCE5zf9Ys6knmNqid1gxMpG1tcPa53zVLv6UFVrdakQY6Y"
-  },
-  {
-    wallet: "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
-    before: "4jBipFtTafWFDK8xGED9jf14WfiCrNck7yQojQ9kD2M4WteJr58suokUcdWKbWgngJxRe76DTvAipATEBoEvqtQp"
-  },
-  {
-    wallet: "AeBgCFnkSWMAwv3zjaJPB93hxEBUEVkhEyKVFaxT84pJ",
-    before: "bWrmxzNVQk5ZqD2rb7i1TQboVpR1Af9ssN7YNQrdv6sKMgBibDEeTLKGxTf6e9div4r3ngojXPzWoCHd2p2Gveh"
-  },
-  {
-    wallet: "DZbgq3yE3r41EFszV3XastvyS8j8QnmNT37nsq7sxR66",
-    before: "5Q61nKCcdos8rPpG12j1atF7Cx3G4FvLHnR1fge31d3sL8Z6Rx32bHPxRFTpbjzTGaCQZZ668DRnFXEwfKab7qvN"
-  },
-  {
-    wallet: "NULLioEUhd89Jo5Acm9sX88bwjNjrsAVy6KWkXD7qZh",
-    before: "3fYANnb1vdKng8szzCJm9xZtzHS2BcRMic5QLABYJ1sLg8tAHPCf7a3xSbbpT4Ae4PYree993YubhCis2aLBn9Ro"
-  }
+  ["Finr5rgQ4B4oZxAfjpA61Cpw77ZJG73FHv9X8mqdZiL6",
+   "5BjXKXeofeum3mH1VjQbMh7v42vKpJLVGTV5H1jG51hRCQtMYBmgUAy2eaz8h2y7hbXiSZ7hpVLC9knb1r35WWWZ"],
+  ["kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+   "4kcmvixBqhshg3SUR1AW13LikMMEDxmBDdtFNSDRfMtYo9wnEHmYgFJaV9kNKKQacXN7SuQJD8Zzw6W5SowCK84X"],
+  ["AeBgCFnkSWMAwv3zjaJPB93hxEBUEVkhEyKVFaxT84pJ",
+   "5k6QH4Y8cjpUqTKRP5aRZKibbXG1MVz2xU6J9cpx57CQbFfrJmKzJ8QzyFY3G7JJxQXm2hYuqqVp48tYhqZJZYjU"],
+  ["DZbgq3yE3r41EFszV3XastvyS8j8QnmNT37nsq7sxR66",
+   "3fRmXfpBuh4cgfqXir7euC4S5x9A2BW4v2GNWHcHqkR2j8v2ka655nQgCjxyiNQckqrWPFtuTX4S6N5nzFnscq3P"],
+  ["NULLioEUhd89Jo5Acm9sX88bwjNjrsAVy6KWkXD7qZh",
+   "2QZtCv1DnPKVJ5HeNYkq1RA4cgays4JH6w3Z1g3nLnMbAKV3dFwpA7knsWwaSQ5i1tVyMyJAhgCESLybtKtQDHMP"]
 ];
 
-const START = Date.parse("2026-09-18T00:00:00+08:00") / 1000;
-const END = Date.parse("2026-09-19T13:15:00+08:00") / 1000;
-
-const TARGET = 0.76;
+const START = Date.parse("2026-09-09T00:00:00+08:00") / 1000;
+const END = Date.parse("2026-09-15T00:45:00+08:00") / 1000;
+const TARGET = 1.01;
 const TOLERANCE = 0.16;
-const MAX_PAGES = 3000;
+const MAX_PAGES = 5000;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-function pht(timestamp) {
-  return new Date(timestamp * 1000).toLocaleString("en-US", {
+function pht(ts) {
+  return new Date(ts * 1000).toLocaleString("en-US", {
     timeZone: "Asia/Manila",
     hour12: true
   });
 }
 
-async function fetchPage(wallet, before) {
-  const url = new URL(
+async function page(wallet, before) {
+  const u = new URL(
     `https://api.helius.xyz/v0/addresses/${wallet}/transactions`
   );
+  u.searchParams.set("api-key", KEY);
+  u.searchParams.set("limit", "100");
+  if (before) u.searchParams.set("before", before);
 
-  url.searchParams.set("api-key", API_KEY);
-  url.searchParams.set("limit", "100");
-  if (before) url.searchParams.set("before", before);
-
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const response = await fetch(url);
-
-    if ([429, 500, 502, 503, 504].includes(response.status)) {
-      const retry = Number(response.headers.get("retry-after"));
-      const delay = Number.isFinite(retry) && retry > 0
-        ? retry * 1000
-        : Math.min(2000 * 2 ** attempt, 60000);
-
-      await sleep(delay);
+  for (let i = 0; i < 9; i++) {
+    const r = await fetch(u);
+    if ([429, 500, 502, 503, 504].includes(r.status)) {
+      const header = Number(r.headers.get("retry-after"));
+      const wait = Number.isFinite(header) && header > 0
+        ? header * 1000
+        : Math.min(2000 * 2 ** i, 60000);
+      await sleep(wait);
       continue;
     }
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-    }
-
-    return response.json();
+    if (!r.ok) throw Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 300)}`);
+    return r.json();
   }
-
-  throw new Error("Request failed after retries");
+  throw Error("Helius retries exhausted");
 }
 
 function analyze(tx, wallet) {
-  const transfers = tx.tokenTransfers || [];
+  const all = tx.tokenTransfers || [];
+  const tokenIn = all
+    .filter(t => t.mint === EMBER && t.toUserAccount === wallet)
+    .reduce((a, t) => a + Number(t.tokenAmount || 0), 0);
+  const tokenOut = all
+    .filter(t => t.mint === EMBER && t.fromUserAccount === wallet)
+    .reduce((a, t) => a + Number(t.tokenAmount || 0), 0);
 
-  const tokenIn = transfers
-    .filter(t => t.mint === KEAINU && t.toUserAccount === wallet)
-    .reduce((sum, t) => sum + Number(t.tokenAmount || 0), 0);
-
-  const tokenOut = transfers
-    .filter(t => t.mint === KEAINU && t.fromUserAccount === wallet)
-    .reduce((sum, t) => sum + Number(t.tokenAmount || 0), 0);
-
-  const wsolOut = transfers
+  const wsolOut = all
     .filter(t => t.mint === WSOL && t.fromUserAccount === wallet)
-    .reduce((sum, t) => sum + Number(t.tokenAmount || 0), 0);
-
-  const wsolIn = transfers
+    .reduce((a, t) => a + Number(t.tokenAmount || 0), 0);
+  const wsolIn = all
     .filter(t => t.mint === WSOL && t.toUserAccount === wallet)
-    .reduce((sum, t) => sum + Number(t.tokenAmount || 0), 0);
+    .reduce((a, t) => a + Number(t.tokenAmount || 0), 0);
 
-  const nativeOut = (tx.nativeTransfers || [])
-    .filter(t => t.fromUserAccount === wallet)
-    .map(t => Number(t.amount || 0) / 1e9)
-    .filter(n => n > 0.01);
-
-  // Native transfers can represent funding a wrapped-SOL account.
-  // Do not add native and WSOL values together.
-  const estimatedSpend = wsolOut > 0
-    ? wsolOut
-    : (nativeOut.length ? Math.max(...nativeOut) : null);
-
-  const direction =
-    tokenIn > 0 && tokenOut === 0 ? "BUY" :
+  const direction = tokenIn > 0 && tokenOut === 0 ? "BUY" :
     tokenOut > 0 && tokenIn === 0 ? "SELL" :
-    tokenIn > 0 && tokenOut > 0 ? "MIXED" :
-    "UNDETERMINED";
+    tokenIn > 0 && tokenOut > 0 ? "MIXED" : "UNKNOWN";
+
+  // Avoid confusing tiny Jupiter fees with a SOL purchase.
+  // Native SOL and WSOL can represent the same wrapped funds.
+  // For unsupported routing, leave spend unknown instead of guessing.
+  const spent = direction === "BUY" && wsolOut >= 0.05
+    ? wsolOut : null;
 
   return {
     signature: tx.signature,
     timestamp: tx.timestamp,
     datePHT: pht(tx.timestamp),
-    type: tx.type,
-    source: tx.source,
     direction,
+    source: tx.source,
+    type: tx.type,
     tokenIn,
     tokenOut,
     wsolOut,
     wsolIn,
-    estimatedSpend,
-    near076: direction === "BUY" &&
-      estimatedSpend !== null &&
-      Math.abs(estimatedSpend - TARGET) <= TOLERANCE
+    estimatedSpend: spent,
+    approximateMatch: spent !== null &&
+      Math.abs(spent - TARGET) <= TOLERANCE
   };
 }
 
-function groupedBuys(buys) {
-  const sorted = [...buys].sort((a, b) => a.timestamp - b.timestamp);
-  const groups = [];
+function report(results) {
+  fs.writeFileSync(
+    "ember-results.json",
+    JSON.stringify(results, null, 2)
+  );
 
-  for (let i = 0; i < sorted.length; i++) {
-    let total = 0;
-    const group = [];
+  const summary = results.map(r => ({
+    wallet: r.wallet,
+    pages: r.pages,
+    complete: r.complete,
+    found: r.transactions.length > 0,
+    buys: r.transactions.filter(t => t.direction === "BUY").length,
+    sells: r.transactions.filter(t => t.direction === "SELL").length,
+    near101: r.transactions.filter(t => t.approximateMatch).length,
+    closestBuys: r.transactions
+      .filter(t => t.direction === "BUY" && t.estimatedSpend !== null)
+      .sort((a, b) =>
+        Math.abs(a.estimatedSpend - TARGET) -
+        Math.abs(b.estimatedSpend - TARGET)
+      ).slice(0, 10).map(t => ({
+        datePHT: t.datePHT,
+        sol: t.estimatedSpend,
+        signature: t.signature
+      })),
+    error: r.error || ""
+  }));
 
-    // Consecutive purchases within 60 minutes of the first buy.
-    for (let j = i; j < sorted.length; j++) {
-      if (sorted[j].timestamp - sorted[i].timestamp > 3600) break;
+  fs.writeFileSync(
+    "ember-summary.json",
+    JSON.stringify(summary, null, 2)
+  );
 
-      const spend = sorted[j].estimatedSpend;
-      if (spend === null) continue;
-
-      total += spend;
-      group.push(sorted[j].signature);
-
-      if (Math.abs(total - TARGET) <= TOLERANCE) {
-        groups.push({
-          fromPHT: sorted[i].datePHT,
-          toPHT: sorted[j].datePHT,
-          combinedEstimatedSpend: total,
-          signatures: [...group]
-        });
-      }
-    }
-  }
-
-  return groups.slice(0, 30);
-}
-
-async function scan(entry) {
-  let before = entry.before;
-  let pages = 0;
-  let reachedStart = false;
-
-  const matches = new Map();
-
-  while (pages < MAX_PAGES) {
-    const txs = await fetchPage(entry.wallet, before);
-    if (!txs.length) {
-      reachedStart = true;
-      break;
-    }
-
-    pages++;
-
-    for (const tx of txs) {
-      if (!tx.timestamp || tx.timestamp < START || tx.timestamp > END) {
-        continue;
-      }
-
-      const touchesMint =
-        (tx.tokenTransfers || []).some(t => t.mint === KEAINU) ||
-        (tx.accountData || []).some(a =>
-          (a.tokenBalanceChanges || []).some(c => c.mint === KEAINU)
-        );
-
-      if (touchesMint) {
-        matches.set(tx.signature, analyze(tx, entry.wallet));
-      }
-    }
-
-    const oldest = Math.min(
-      ...txs.filter(t => t.timestamp).map(t => t.timestamp)
-    );
-
-    if (Number.isFinite(oldest) && oldest < START) {
-      reachedStart = true;
-      break;
-    }
-
-    if (txs.length < 100) {
-      reachedStart = true;
-      break;
-    }
-
-    const nextBefore = txs[txs.length - 1]?.signature;
-    if (!nextBefore || nextBefore === before) break;
-
-    before = nextBefore;
-
-    if (pages % 25 === 0) {
-      console.log(
-        `${entry.wallet.slice(0, 8)}: ${pages} pages, ` +
-        `${matches.size} Keainu transactions; oldest ${pht(oldest)}`
-      );
-    }
-
-    await sleep(300);
-  }
-
-  const transactions = [...matches.values()]
-    .sort((a, b) => a.timestamp - b.timestamp);
-
-  const buys = transactions.filter(t => t.direction === "BUY");
-
-  return {
-    wallet: entry.wallet,
-    pagesScanned: pages,
-    completeThroughStart: reachedStart,
-    keainuFound: transactions.length > 0,
-    buyCount: buys.length,
-    sellCount: transactions.filter(t => t.direction === "SELL").length,
-    singleBuyMatches: buys.filter(t => t.near076),
-    splitBuyMatches: groupedBuys(buys),
-    transactions
-  };
+  return summary;
 }
 
 async function main() {
   const results = [];
 
-  for (const [i, entry] of wallets.entries()) {
-    console.log(`Scanning ${i + 1}/${wallets.length}: ${entry.wallet}`);
+  for (const [wallet, initialCursor] of wallets) {
+    console.log(`\nScanning ${wallet}`);
+    let before = initialCursor;
+    let pages = 0;
+    let complete = false;
+    let error = null;
+    const found = new Map();
 
-    try {
-      const result = await scan(entry);
-      results.push(result);
+    while (pages < MAX_PAGES) {
+      try {
+        const txs = await page(wallet, before);
+        if (!txs.length) {
+          complete = true;
+          break;
+        }
+        pages++;
 
-      console.log(
-        `Keainu=${result.keainuFound}, ` +
-        `buys=${result.buyCount}, ` +
-        `singleMatches=${result.singleBuyMatches.length}, ` +
-        `splitMatches=${result.splitBuyMatches.length}, ` +
-        `complete=${result.completeThroughStart}`
-      );
-    } catch (error) {
-      console.error(error.message);
-      results.push({ wallet: entry.wallet, error: error.message });
+        const valid = txs.filter(t => Number.isFinite(t.timestamp));
+        if (!valid.length) {
+          error = "Page without valid timestamps";
+          break;
+        }
+
+        for (const tx of valid) {
+          if (tx.timestamp < START || tx.timestamp > END) continue;
+
+          const hasMint = (tx.tokenTransfers || [])
+            .some(t => t.mint === EMBER) ||
+            (tx.accountData || []).some(a =>
+              (a.tokenBalanceChanges || []).some(c => c.mint === EMBER)
+            );
+
+          if (hasMint) found.set(tx.signature, analyze(tx, wallet));
+        }
+
+        const oldest = Math.min(...valid.map(t => t.timestamp));
+        if (pages % 25 === 0) {
+          console.log(
+            `${pages} pages | oldest ${pht(oldest)} | ` +
+            `EMBER ${found.size}`
+          );
+        }
+
+        if (oldest < START || txs.length < 100) {
+          complete = true;
+          break;
+        }
+
+        const next = txs[txs.length - 1]?.signature;
+        if (!next || next === before) {
+          error = "Pagination did not advance";
+          break;
+        }
+
+        before = next;
+        await sleep(350);
+      } catch (e) {
+        error = e.message;
+        console.error(error);
+        break;
+      }
     }
 
-    fs.writeFileSync(
-      "keainu-results.json",
-      JSON.stringify(results, null, 2)
-    );
+    results.push({
+      wallet,
+      pages,
+      complete,
+      error,
+      transactions: [...found.values()]
+        .sort((a, b) => a.timestamp - b.timestamp)
+    });
+
+    console.table(report(results).slice(-1));
   }
 
-  const summary = results.map(r => ({
-    wallet: r.wallet,
-    found: r.keainuFound ?? false,
-    buys: r.buyCount ?? 0,
-    near076: r.singleBuyMatches?.length ?? 0,
-    splitMatches: r.splitBuyMatches?.length ?? 0,
-    complete: r.completeThroughStart ?? false,
-    error: r.error || ""
-  }));
-
-  fs.writeFileSync(
-    "keainu-summary.json",
-    JSON.stringify(summary, null, 2)
-  );
-
-  console.table(summary);
+  console.log("\nFINAL");
+  console.table(report(results));
 }
 
-main().catch(console.error);
+main().catch(err => {
+  console.error(err);
+  process.exitCode = 1;
+});
