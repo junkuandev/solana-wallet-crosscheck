@@ -28,9 +28,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: subs-deep-scan-results
+          name: boar-inu-wallet-scan
           path: |
-            subs-results.json
-            subs-matches.json
+            results.json
+            summary.csv
+            hard-matches.json
+            strong-matches.json
+            strong-matches.txt
           if-no-files-found: warn
           retention-days: 7
