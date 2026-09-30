@@ -19,18 +19,25 @@ jobs:
         with:
           node-version: 22
 
-      - name: Run Helius wallet scanner
+      - name: Identify EMBER tokens
         env:
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
-        run: node scanner.js
-
-      - name: Upload EMBER reverse scan
+        run: node identify-ember.js
+      
+      - name: Verify output files
+        if: always()
+        run: |
+          echo "Repository files:"
+          ls -lah
+          echo "Expected output files:"
+          ls -lh ember-identified.json ember-name-matches.json
+      
+      - name: Upload EMBER identification results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ember-reverse-scan
+          name: ember-identification
           path: |
             ember-identified.json
             ember-name-matches.json
-          if-no-files-found: warn
-          retention-days: 7
+          if-no-files-found: error
