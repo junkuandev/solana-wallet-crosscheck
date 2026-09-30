@@ -30,8 +30,7 @@ jobs:
         with:
           name: ember-reverse-scan
           path: |
-            ember-reverse-results.json
-            ember-reverse-summary.json
-            ember-reverse-candidates.json
+            ember-identified.json
+            ember-name-matches.json
           if-no-files-found: warn
           retention-days: 7
