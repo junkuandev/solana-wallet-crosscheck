@@ -24,13 +24,14 @@ jobs:
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
         run: node scanner.js
 
-      - name: Upload EMBER results
+      - name: Upload EMBER reverse scan
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ember-wallet-scan
+          name: ember-reverse-scan
           path: |
-            ember-results.json
-            ember-summary.json
+            ember-reverse-results.json
+            ember-reverse-summary.json
+            ember-reverse-candidates.json
           if-no-files-found: warn
           retention-days: 7
