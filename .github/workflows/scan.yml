@@ -24,13 +24,13 @@ jobs:
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
         run: node scanner.js
 
-      - name: Upload Keainu results
+      - name: Upload EMBER results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: keainu-wallet-scan
+          name: ember-wallet-scan
           path: |
-            keainu-results.json
-            keainu-summary.json
+            ember-results.json
+            ember-summary.json
           if-no-files-found: warn
           retention-days: 7
