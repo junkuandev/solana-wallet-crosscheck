@@ -21,7 +21,7 @@ const query=`query Probe($mint:String!,$since:DateTime!,$before:DateTime!) {
  }
 }`;
 async function main(){
- const report={mint,windowUTC:["2026-10-05T04:45:00Z","2026-10-05T04:59:00Z"],status:"not_run"};
+ const report={mint,windowUTC:["2026-10-05T04:30:00Z","2026-10-05T06:00:00Z"],status:"not_run"};
  try {
   const response=await fetch("https://streaming.bitquery.io/graphql",{
    method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+token},
