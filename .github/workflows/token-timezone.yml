@@ -1,0 +1,47 @@
+name: Token Launch Timezone Analysis
+on:
+  workflow_dispatch:
+    inputs:
+      mint:
+        description: "Full Solana token mint address"
+        required: true
+        type: string
+      display_time:
+        description: "Screenshot timestamp (YYYY-MM-DDTHH:MM, no timezone)"
+        required: true
+        default: "2026-10-05T08:21"
+        type: string
+      hold_minutes:
+        description: "Hold time shown in screenshot, minutes"
+        required: true
+        default: "1"
+        type: string
+      max_pages:
+        description: "Max mint history pages (1000 signatures per page)"
+        required: true
+        default: "30"
+        type: string
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Inspect mint history and timezone candidates
+        env:
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          MINT: ${{ inputs.mint }}
+          DISPLAY_TIME: ${{ inputs.display_time }}
+          HOLD_MINUTES: ${{ inputs.hold_minutes }}
+          MAX_PAGES: ${{ inputs.max_pages }}
+        run: node token-timezone.js
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: token-timezone-results
+          path: token-timezone-results.json
+          if-no-files-found: warn
