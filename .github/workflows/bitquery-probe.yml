@@ -5,7 +5,7 @@ on:
       mint:
         description: "Test mint address"
         required: true
-        default: "64hJjjXBbqFdpMjgPvbUp1AA4bardkGEnEdDqFepccAX"
+        default: "Ca5VuKu5NyyFkixnewTnokmzXpmNuG8Mk5odwHJypRNq"
         type: string
 jobs:
   probe:
