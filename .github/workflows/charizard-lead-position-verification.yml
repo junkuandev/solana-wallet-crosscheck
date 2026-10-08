@@ -1,0 +1,24 @@
+name: Charizard Lead Wallet Verification
+on:
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save --no-package-lock @solana-tracker/data-api@0.5.0
+      - name: Verify original strongest Charizard wallet
+        env:
+          SOLANA_TRACKER_API_KEY: ${{ secrets.SOLANA_TRACKER_API_KEY }}
+        run: node charizard-lead-position-verification.js
+      - name: Save wallet verification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: charizard-lead-position-verification
+          path: charizard-lead-position-verification.json
+          if-no-files-found: warn
