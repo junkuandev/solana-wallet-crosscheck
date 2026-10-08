@@ -1,105 +1,93 @@
-// Compare screenshot-local timestamps with the earliest retrievable mint-address transaction.
-// Usage: MINT=... DISPLAY_TIME=2026-10-05T08:21 HOLD_MINUTES=1 node token-timezone.js
+// Token creation-time lookup: no mint transaction-history pagination, no Helius credits.
+// Use: MINT=... DISPLAY_TIME=2026-10-05T08:21 HOLD_MINUTES=1 node token-timezone.js
 const fs = require("node:fs");
-const mint = process.env.MINT?.trim();
-const shown = process.env.DISPLAY_TIME?.trim();
-const hold = Number(process.env.HOLD_MINUTES || 0);
-const key = process.env.HELIUS_API_KEY;
-const maxPages = Math.min(100, Math.max(1, Number(process.env.MAX_PAGES || 30)));
-if (!key || !mint || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint) ||
-    !/^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(shown) ||
+const mint = (process.env.MINT || "").trim();
+const shown = (process.env.DISPLAY_TIME || "").trim();
+const hold = Number(process.env.HOLD_MINUTES ?? 0);
+if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint) ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(shown) ||
     !Number.isFinite(hold) || hold < 0) {
-  throw Error("Set HELIUS_API_KEY, valid MINT, DISPLAY_TIME=YYYY-MM-DDTHH:MM, HOLD_MINUTES>=0");
+  throw Error("Provide valid MINT, DISPLAY_TIME=YYYY-MM-DDTHH:MM and HOLD_MINUTES>=0");
 }
-const endpoint = "https://mainnet.helius-rpc.com/?api-key=" + encodeURIComponent(key);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-async function rpc(method, params) {
-  for (let attempt = 0; attempt < 6; attempt++) {
-    let res;
-    try {
-      res = await fetch(endpoint, {
-        method: "POST", headers: {"content-type": "application/json"},
-        body: JSON.stringify({jsonrpc: "2.0", id: 1, method, params})
-      });
-      if (res.status === 429 || res.status >= 500) {
-        const retry = Number(res.headers.get("retry-after"));
-        const delay = Number.isFinite(retry) && retry > 0 ?
-          Math.min(retry * 1000, 90000) : Math.min(2000 * 2 ** attempt, 90000);
-        console.warn(method, "HTTP", res.status, "retrying in", delay, "ms");
-        await sleep(delay);
-        continue;
-      }
-      if (!res.ok) throw Error(method + " HTTP " + res.status + ": " + (await res.text()).slice(0, 250));
-      const body = await res.json();
-      if (body.error) {
-        if (body.error.code === 429 || body.error.code === -32429) {
-          await sleep(Math.min(2000 * 2 ** attempt, 90000));
-          continue;
-        }
-        throw Error(method + ": " + JSON.stringify(body.error));
-      }
-      return body.result;
-    } catch (e) {
-      if (attempt === 5 || !/fetch failed|network|timeout/i.test(String(e))) throw e;
-      await sleep(2000 * 2 ** attempt);
+async function json(url) {
+  for (let i = 0; i < 3; i++) {
+    const r = await fetch(url, {headers:{accept:"application/json"}, signal:AbortSignal.timeout(12000)});
+    if (r.status === 429 || r.status >= 500) {
+      if (i === 2) throw Error("HTTP " + r.status);
+      await sleep(1500 * (i + 1)); continue;
     }
+    if (!r.ok) throw Error("HTTP " + r.status);
+    return r.json();
   }
-  throw Error(method + " rate-limited after retries");
+}
+function epoch(value) {
+  if (typeof value === "string" && /^\d+$/.test(value)) value = Number(value);
+  if (typeof value === "string") {
+    const t = Date.parse(value); return Number.isFinite(t) ? t : null;
+  }
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value < 1e11 ? value * 1000 : value;
+}
+async function lookup() {
+  const attempts = [];
+  // Pump.fun token metadata creation timestamp is more relevant than a DEX pair timestamp.
+  for (const url of [
+    "https://frontend-api-v3.pump.fun/coins/" + mint,
+    "https://frontend-api.pump.fun/coins/" + mint
+  ]) {
+    try {
+      const item = await json(url);
+      if (!item || (item.mint && item.mint !== mint)) throw Error("Unexpected mint in response");
+      const ts = epoch(item.created_timestamp ?? item.createdTimestamp);
+      if (ts) return {source:"pumpfun-coin-created_timestamp", timestampMs:ts,
+        verifiedOnChain:false, attempts};
+      attempts.push({source:url, issue:"No created_timestamp"});
+    } catch(e) {attempts.push({source:url, issue:e.message});}
+  }
+  // DexScreener pairCreatedAt is *not* token launch time, and is NOT used to rule out timezones.
+  try {
+    const pairs = await json("https://api.dexscreener.com/token-pairs/v1/solana/" + mint);
+    const times = (Array.isArray(pairs) ? pairs : [])
+      .filter(p => p?.baseToken?.address === mint || p?.quoteToken?.address === mint)
+      .map(p => ({ts:epoch(p.pairCreatedAt),dex:p.dexId,pair:p.pairAddress}))
+      .filter(p => p.ts).sort((a,b) => a.ts - b.ts);
+    if (times.length) return {source:"dexscreener-earliest-pair-created", timestampMs:times[0].ts,
+      verifiedOnChain:false, proxyOnly:true, pair:times[0], attempts};
+  } catch(e) {attempts.push({source:"dexscreener",issue:e.message});}
+  return {source:"unavailable",timestampMs:null,attempts};
 }
 async function main() {
-  let before, oldest, pages = 0, exhausted = false, total = 0;
-  for (; pages < maxPages; pages++) {
-    const opts = {limit: 1000};
-    if (before) opts.before = before;
-    const batch = await rpc("getSignaturesForAddress", [mint, opts]);
-    if (!Array.isArray(batch)) throw Error("Unexpected signatures response");
-    total += batch.length;
-    if (batch.length) {
-      oldest = batch[batch.length - 1];
-      before = oldest.signature;
-    }
-    console.log("Page", pages + 1, "records", batch.length,
-      "oldest UTC", oldest?.blockTime ? new Date(oldest.blockTime * 1000).toISOString() : "unknown");
-    if (batch.length < 1000) {exhausted = true; pages++; break;}
-    await sleep(250);
-  }
-  const knownTime = oldest?.blockTime;
-  if (!knownTime) throw Error("No timestamp found. Check the mint address or RPC history coverage.");
-  const offsets = [
-    {zone:"UTC", hours:0}, {zone:"Philippines (UTC+8)", hours:8},
-    {zone:"US Eastern (EDT, Oct 5)", hours:-4}, {zone:"London (BST, Oct 5)", hours:1}
-  ];
-  const [year, month, day, hour, minute] = shown.match(/\d+/g).map(Number);
-  const naiveUtc = Date.UTC(year, month - 1, day, hour, minute) / 1000;
-  const results = offsets.map(({zone,hours}) => {
-    const displayedUtc = naiveUtc - hours * 3600;
-    const ageMinutes = (displayedUtc - knownTime) / 60;
-    return {
-      timezone:zone, displayedEventUTC:new Date(displayedUtc * 1000).toISOString(),
-      earliestObservedMintTxUTC:new Date(knownTime * 1000).toISOString(),
-      minutesSinceEarliestObservedTx:Math.round(ageMinutes * 10) / 10,
-      ifDateIsEntry: {ageMinutes:Math.round(ageMinutes * 10) / 10,
-        beforeEarliestObservedTx:ageMinutes < 0},
-      ifDateIsExit: {estimatedEntryAgeMinutes:Math.round((ageMinutes - hold) * 10) / 10,
-        beforeEarliestObservedTx:ageMinutes - hold < 0}
-    };
+  const result = await lookup();
+  const [y,mo,d,h,mi] = shown.match(/\d+/g).map(Number);
+  const localAsUtc = Date.UTC(y,mo-1,d,h,mi);
+  if (!Number.isFinite(localAsUtc) || new Date(localAsUtc).toISOString().slice(0,16) !== shown)
+    throw Error("Invalid DISPLAY_TIME date");
+  const offsets = [{name:"UTC",h:0},{name:"Philippines UTC+8",h:8},
+    {name:"US Eastern EDT UTC-4",h:-4},{name:"London BST UTC+1",h:1}];
+  const candidates = offsets.map(z => {
+    const event = localAsUtc - z.h * 3600000;
+    const age = result.timestampMs === null ? null : (event-result.timestampMs)/60000;
+    return {timezone:z.name,eventUtc:new Date(event).toISOString(),
+      minutesAfterReference:age === null ? null : Number(age.toFixed(2)),
+      estimatedEntryAgeIfDateIsExit:age === null ? null : Number((age-hold).toFixed(2)),
+      impossibleIfDateIsEntry:age === null || result.proxyOnly ? null : age < 0,
+      impossibleIfDateIsExit:age === null || result.proxyOnly ? null : age-hold < 0};
   });
-  const report = {
-    mint, shown, holdMinutes:hold, scannedPages:pages, signaturesSeen:total,
-    historyExhausted:exhausted, earliestObservedSignature:oldest.signature,
-    earliestObservedBlockTimeUTC:new Date(knownTime * 1000).toISOString(),
-    warning:exhausted ?
-      "Earliest mint-address transaction found, but it is NOT proof of token launch. Verify the mint initialization transaction." :
-      "History scan hit MAX_PAGES. Earliest observed timestamp is NOT the launch time; no timezone can be excluded on this evidence.",
-    note:"Displayed timestamp may mean entry, exit, or alert. PNL is not needed for timezone testing. Rounding may cause minute-level differences.",
-    results
-  };
-  fs.writeFileSync("token-timezone-results.json", JSON.stringify(report, null, 2));
-  console.table(results.map(x => ({
-    zone:x.timezone, eventUTC:x.displayedEventUTC,
-    ageMin:x.minutesSinceEarliestObservedTx,
-    entryIfExitAgeMin:x.ifDateIsExit.estimatedEntryAgeMinutes
-  })));
+  const report = {mint,displayTime:shown,holdMinutes:hold,
+    referenceSource:result.source,
+    referenceTimeUtc:result.timestampMs === null ? null : new Date(result.timestampMs).toISOString(),
+    onChainVerified:false,
+    referenceIsOnlyPairCreation:!!result.proxyOnly,
+    warning:result.proxyOnly ?
+      "Pair creation is not token creation. Do not exclude a timezone using these comparisons." :
+      result.timestampMs === null ?
+      "No reliable token creation timestamp found from public endpoints." :
+      "Pump.fun metadata timestamp found; verify against creation signature before treating it as definitive.",
+    lookupIssues:result.attempts, candidates};
+  fs.writeFileSync("token-timezone-results.json",JSON.stringify(report,null,2));
+  console.log("Reference:",report.referenceSource,report.referenceTimeUtc);
+  console.table(candidates);
   console.log(report.warning);
 }
-main().catch(e => { console.error(e.message); process.exitCode = 1; });
+main().catch(e => {console.error(e);process.exitCode=1;});
