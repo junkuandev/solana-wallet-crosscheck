@@ -21,9 +21,12 @@ const query=`query Probe($mint:String!,$since:DateTime!,$before:DateTime!) {
  }
 }`;
 async function main(){
- const end=Date.now()-30000; // allow indexing delay
+ const historical=process.env.PROBE_MODE==="historical";
+ const end=Date.now()-30000; // allow indexing delay for live
  const start=end-15*60*1000;
- const report={mint,windowUTC:[new Date(start).toISOString(),new Date(end).toISOString()],status:"not_run"};
+ const report={mint,mode:historical?"historical":"live",windowUTC:historical?
+   ["2026-10-05T00:00:00Z","2026-10-06T00:00:00Z"]:
+   [new Date(start).toISOString(),new Date(end).toISOString()],status:"not_run"};
  try {
   const response=await fetch("https://streaming.bitquery.io/graphql",{
    method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+token},
