@@ -2,10 +2,18 @@ name: Bitquery Low-Credit Probe
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: "Probe window"
+        required: true
+        default: "historical"
+        type: choice
+        options:
+          - historical
+          - live
       mint:
         description: "Test mint address"
         required: true
-        default: "Ca5VuKu5NyyFkixnewTnokmzXpmNuG8Mk5odwHJypRNq"
+        default: "64hJjjXBbqFdpMjgPvbUp1AA4bardkGEnEdDqFepccAX"
         type: string
 jobs:
   probe:
@@ -20,6 +28,7 @@ jobs:
         env:
           BITQUERY_API_KEY: ${{ secrets.BITQUERY_API_KEY }}
           TEST_MINT: ${{ inputs.mint }}
+          PROBE_MODE: ${{ inputs.mode }}
         run: node bitquery-probe.js
       - name: Upload diagnostic
         if: always()
