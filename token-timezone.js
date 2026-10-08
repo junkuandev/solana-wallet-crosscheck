@@ -31,6 +31,43 @@ function epoch(value) {
 }
 async function lookup() {
   const attempts = [];
+  // Solscan Pro returns the actual create transaction, unlike DEX pair creation.
+  if (process.env.SOLSCAN_API_KEY) {
+    try {
+      const r = await fetch("https://pro-api.solscan.io/v2.0/token/meta?address=" + mint, {
+        headers: {token: process.env.SOLSCAN_API_KEY, accept: "application/json"},
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!r.ok) throw Error("Solscan HTTP " + r.status);
+      const payload = await r.json(), info = payload?.data;
+      if (!payload?.success || info?.address !== mint || !info?.create_tx)
+        throw Error("Solscan did not return a matching token and create_tx");
+      let ts = epoch(info.created_time);
+      let verifiedOnChain = false, chainTimestamp = null;
+      if (process.env.HELIUS_API_KEY) {
+        const tx = await fetch("https://mainnet.helius-rpc.com/?api-key=" + encodeURIComponent(process.env.HELIUS_API_KEY), {
+          method:"POST", headers:{"content-type":"application/json"},
+          body:JSON.stringify({jsonrpc:"2.0",id:1,method:"getTransaction",
+            params:[info.create_tx,{encoding:"jsonParsed",maxSupportedTransactionVersion:0}]}),
+          signal:AbortSignal.timeout(15000)
+        }).then(r => { if (!r.ok) throw Error("Helius HTTP " + r.status);return r.json();});
+        if (tx.result?.blockTime) {
+          chainTimestamp = tx.result.blockTime * 1000;
+          verifiedOnChain = true;
+          if (ts && Math.abs(chainTimestamp - ts) > 60000)
+            attempts.push({source:"solscan-helius",issue:"Creation timestamps differ by over one minute"});
+          ts = chainTimestamp;
+        } else {
+          attempts.push({source:"helius",issue:"Creation signature not verified: "+(tx.error?.message || "no transaction")});
+        }
+      }
+      if (ts) return {source:"solscan-create-tx",timestampMs:ts,
+        signature:info.create_tx,verifiedOnChain,attempts};
+      attempts.push({source:"solscan",issue:"Missing valid created_time"});
+    } catch(e) {attempts.push({source:"solscan",issue:e.message});}
+  } else {
+    attempts.push({source:"solscan",issue:"SOLSCAN_API_KEY secret not configured"});
+  }
   // Pump.fun token metadata creation timestamp is more relevant than a DEX pair timestamp.
   for (const url of [
     "https://frontend-api-v3.pump.fun/coins/" + mint,
@@ -77,13 +114,15 @@ async function main() {
   const report = {mint,displayTime:shown,holdMinutes:hold,
     referenceSource:result.source,
     referenceTimeUtc:result.timestampMs === null ? null : new Date(result.timestampMs).toISOString(),
-    onChainVerified:false,
+    onChainVerified:!!result.verifiedOnChain,
+    creationSignature:result.signature || null,
     referenceIsOnlyPairCreation:!!result.proxyOnly,
     warning:result.proxyOnly ?
       "Pair creation is not token creation. Do not exclude a timezone using these comparisons." :
       result.timestampMs === null ?
       "No reliable token creation timestamp found from public endpoints." :
-      "Pump.fun metadata timestamp found; verify against creation signature before treating it as definitive.",
+      result.verifiedOnChain ? "Creation signature timestamp verified on-chain." :
+      "Creation timestamp is from metadata; independently verify the creation signature.",
     lookupIssues:result.attempts, candidates};
   fs.writeFileSync("token-timezone-results.json",JSON.stringify(report,null,2));
   console.log("Reference:",report.referenceSource,report.referenceTimeUtc);
