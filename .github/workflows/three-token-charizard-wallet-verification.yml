@@ -1,0 +1,24 @@
+name: Verify Three Token Common Wallets
+on:
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save --no-package-lock @solana-tracker/data-api@0.5.0
+      - name: Verify Charizard wallet positions
+        env:
+          SOLANA_TRACKER_API_KEY: ${{ secrets.SOLANA_TRACKER_API_KEY }}
+        run: node three-token-charizard-wallet-verification.js
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: three-token-charizard-wallet-verification
+          path: three-token-charizard-wallet-verification.json
+          if-no-files-found: warn
