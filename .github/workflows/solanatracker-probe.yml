@@ -1,0 +1,32 @@
+name: Solana Tracker History Probe
+on:
+  workflow_dispatch:
+    inputs:
+      mint:
+        description: "Target token mint"
+        required: true
+        default: "64hJjjXBbqFdpMjgPvbUp1AA4bardkGEnEdDqFepccAX"
+        type: string
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install official Solana Tracker SDK
+        run: npm install --no-save --no-package-lock @solana-tracker/data-api@0.4.0
+      - name: Retrieve earliest five indexed token trades
+        env:
+          SOLANA_TRACKER_API_KEY: ${{ secrets.SOLANA_TRACKER_API_KEY }}
+          TEST_MINT: ${{ inputs.mint }}
+        run: node solanatracker-probe.js
+      - name: Upload diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solanatracker-probe
+          path: solanatracker-probe.json
+          if-no-files-found: warn
