@@ -1,0 +1,24 @@
+name: Pairstreet Third Token Scan
+on:
+  workflow_dispatch:
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save --no-package-lock @solana-tracker/data-api@0.5.0
+      - name: Scan Pairstreet entry and exit windows
+        env:
+          SOLANA_TRACKER_API_KEY: ${{ secrets.SOLANA_TRACKER_API_KEY }}
+        run: node pairstreet-third-token.js
+      - name: Upload candidate report and trades
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pairstreet-third-token
+          path: pairstreet-third-token.json
+          if-no-files-found: warn
