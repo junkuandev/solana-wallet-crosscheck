@@ -6,7 +6,7 @@ const token=process.env.BITQUERY_API_KEY;
 if(!token)throw Error("Missing BITQUERY_API_KEY GitHub secret");
 if(!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint))throw Error("Invalid TEST_MINT");
 const query=`query Probe($mint:String!,$since:DateTime!,$before:DateTime!) {
- Solana(dataset: archive) {
+ Solana(dataset: realtime) {
   DEXTradeByTokens(
    where:{Trade:{Currency:{MintAddress:{is:$mint}}},
      Block:{Time:{since:$since,before:$before}},
