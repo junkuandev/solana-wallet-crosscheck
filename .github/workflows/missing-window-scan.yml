@@ -1,0 +1,23 @@
+name: Two Token Missing Window Scan
+on:
+  workflow_dispatch:
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save --no-package-lock @solana-tracker/data-api@0.5.0
+      - name: Retrieve missing windows
+        env:
+          SOLANA_TRACKER_API_KEY: ${{ secrets.SOLANA_TRACKER_API_KEY }}
+        run: node missing-window-scan.js
+      - name: Upload gap trades
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: missing-window-trades
+          path: missing-window-trades.json
