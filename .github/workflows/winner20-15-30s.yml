@@ -1,0 +1,27 @@
+name: Winner20 15-30s Entry Study
+on:
+  workflow_dispatch:
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save --no-package-lock @solana-tracker/data-api@0.5.0
+      - name: Collect five-second launch charts
+        env:
+          SOLANA_TRACKER_API_KEY: ${{ secrets.SOLANA_TRACKER_API_KEY }}
+        run: node winner20-15-30s.js
+      - name: Upload entry-window assessment
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: winner20-15-30s
+          path: |
+            winner20-15-30s.json
+            winner20-15-30s.csv
+            winner20-15-30s-assessment.json
+          if-no-files-found: warn
