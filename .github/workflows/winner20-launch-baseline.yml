@@ -1,0 +1,27 @@
+name: Winner20 Launch Baseline
+on:
+  workflow_dispatch:
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save --no-package-lock @solana-tracker/data-api@0.5.0
+      - name: Collect token charts and current-only metadata
+        env:
+          SOLANA_TRACKER_API_KEY: ${{ secrets.SOLANA_TRACKER_API_KEY }}
+        run: node winner20-launch-baseline.js
+      - name: Upload baseline data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: winner20-launch-baseline
+          path: |
+            winner20-launch-baseline.json
+            winner20-launch-baseline.csv
+            winner20-filter-assessment.json
+          if-no-files-found: warn
