@@ -1,0 +1,35 @@
+name: Preset Wallet Candidate Scan
+on:
+  workflow_dispatch:
+    inputs:
+      charizard_mint:
+        description: "Full Charizard Strategy mint (optional; attempt discovery otherwise)"
+        required: false
+        default: "64hJjjXBbqFdpMjgPvbUp1AA4bardkGEnEdDqFepccAX"
+        type: string
+      fomi_mint:
+        description: "Full Fomi Ai mint (optional; attempt DexScreener discovery otherwise)"
+        required: false
+        type: string
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Find wallet candidates
+        env:
+          SOLSCAN_API_KEY: ${{ secrets.SOLSCAN_API_KEY }}
+          CHARIZARD_MINT: ${{ inputs.charizard_mint }}
+          FOMI_MINT: ${{ inputs.fomi_mint }}
+        run: node preset-wallet-candidates.js
+      - name: Upload candidates (including partial)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preset-wallet-candidates
+          path: preset-wallet-candidates.json
+          if-no-files-found: warn
