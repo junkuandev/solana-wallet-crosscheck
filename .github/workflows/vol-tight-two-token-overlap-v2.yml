@@ -1,0 +1,24 @@
+name: Vol Tight Two Token Overlap V2
+on:
+  workflow_dispatch:
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save --no-package-lock @solana-tracker/data-api@0.5.0
+      - name: Scan entry and exit interpretations across two tokens
+        env:
+          SOLANA_TRACKER_API_KEY: ${{ secrets.SOLANA_TRACKER_API_KEY }}
+        run: node vol-tight-two-token-overlap-v2.js
+      - name: Upload raw data and wallet matches
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vol-tight-two-token-overlap-v2
+          path: vol-tight-two-token-overlap-v2.json
+          if-no-files-found: warn
