@@ -31,6 +31,8 @@ jobs:
           MINT: ${{ inputs.mint }}
           DISPLAY_TIME: ${{ inputs.display_time }}
           HOLD_MINUTES: ${{ inputs.hold_minutes }}
+          SOLSCAN_API_KEY: ${{ secrets.SOLSCAN_API_KEY }}
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
         run: node token-timezone.js
       - name: Upload timezone results
         if: always()
